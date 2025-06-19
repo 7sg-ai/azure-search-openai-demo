@@ -4,7 +4,7 @@ aiofiles==24.1.0
     # via
     #   prompty
     #   quart
-aiohappyeyeballs==2.4.4
+aiohappyeyeballs==2.6.1
     # via aiohttp
 aiohttp==3.10.11
     # via
