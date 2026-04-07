@@ -2,6 +2,7 @@ apiVersion: wdf.7sg.ai/v2
 kind: WorkloadDefinition
 metadata:
   name: azure-search-openai-demo-scenarios
+  version: "1.0.0"
   description: RAG chat app (Azure Search + OpenAI) with two scenarios - native
     (gpt-4.1-mini) and alternate (gpt-4.1-nano) on Azure Container Apps. Quart
     backend serves a React frontend with multi-turn chat, Q&A, citations, and
