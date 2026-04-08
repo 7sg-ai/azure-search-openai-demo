@@ -94,6 +94,8 @@ def upload_documents(sa_name, sa_key, data_dir="data"):
     existing = [b.name for b in cc.list_blobs()]
 
     for filepath in glob.glob(os.path.join(data_dir, "*")):
+        if os.path.isdir(filepath):
+            continue
         fname = os.path.basename(filepath)
         if fname in existing:
             print(f"  Exists: {fname}")
