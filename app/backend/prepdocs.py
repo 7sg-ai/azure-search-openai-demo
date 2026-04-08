@@ -179,6 +179,17 @@ def setup_embeddings_service(
         logger.info("Not setting up embeddings service")
         return None
 
+    # Self-hosted Nomic embedding via Triton Inference Server
+    if os.getenv("NOMIC_EMBED_URL"):
+        from prepdocslib.nomic_embeddings import NomicTritonEmbeddingService
+        logger.info("Using Nomic Triton embedding service at %s", os.environ["NOMIC_EMBED_URL"])
+        return NomicTritonEmbeddingService(
+            endpoint=os.environ["NOMIC_EMBED_URL"],
+            dimensions=openai_dimensions,
+            cf_client_id=os.getenv("CF_ACCESS_CLIENT_ID", ""),
+            cf_client_secret=os.getenv("CF_ACCESS_CLIENT_SECRET", ""),
+        )
+
     if openai_host != "openai":
         azure_open_ai_credential: Union[AsyncTokenCredential, AzureKeyCredential] = (
             azure_credential if openai_key is None else AzureKeyCredential(openai_key)
@@ -401,7 +412,7 @@ if __name__ == "__main__":
             use_agentic_retrieval=use_agentic_retrieval,
             agent_name=os.getenv("AZURE_SEARCH_AGENT"),
             agent_max_output_tokens=int(os.getenv("AZURE_SEARCH_AGENT_MAX_OUTPUT_TOKENS", 10000)),
-            azure_openai_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+            azure_openai_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT", ""),
             azure_openai_searchagent_deployment=os.getenv("AZURE_OPENAI_SEARCHAGENT_DEPLOYMENT"),
             azure_openai_searchagent_model=os.getenv("AZURE_OPENAI_SEARCHAGENT_MODEL"),
             azure_credential=azd_credential,
