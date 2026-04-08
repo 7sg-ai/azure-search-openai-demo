@@ -1,0 +1,297 @@
+apiVersion: wdf.7sg.ai/v2
+kind: WorkloadDefinition
+metadata:
+  name: azure-search-openai-demo-scenarios
+  description: RAG chat app (Azure Search + OpenAI) with two scenarios - native
+    (gpt-4.1-mini) and alternate (gpt-4.1-nano) on Azure Container Apps. Quart
+    backend serves a React frontend with multi-turn chat, Q&A, citations, and
+    streaming support.
+  tags:
+    env: prod
+security:
+  network:
+    defaultExposure: private
+  identity:
+    workloadIdentity: true
+secrets:
+  provider: azureKeyVault
+  azure-subscription-id: 82714879-4727-454d-8740-b2d24f5f426b
+  azure-tenant-id: d14f9525-afc9-4197-b391-5de78abfaab5
+  secretRefs:
+  - name: searchdemo-openai-service
+    injectAs: env
+    envVar: AZURE_OPENAI_SERVICE
+    externalRef:
+      provider: azure-keyvault
+      key: searchdemo-openai-service
+      vaultUrl: https://wdf-secret-manager.vault.azure.net/
+  - name: searchdemo-openai-api-key
+    injectAs: env
+    envVar: AZURE_OPENAI_API_KEY_OVERRIDE
+    externalRef:
+      provider: azure-keyvault
+      key: searchdemo-openai-api-key
+      vaultUrl: https://wdf-secret-manager.vault.azure.net/
+  - name: searchdemo-search-service
+    injectAs: env
+    envVar: AZURE_SEARCH_SERVICE
+    externalRef:
+      provider: azure-keyvault
+      key: searchdemo-search-service
+      vaultUrl: https://wdf-secret-manager.vault.azure.net/
+  - name: searchdemo-search-index
+    injectAs: env
+    envVar: AZURE_SEARCH_INDEX
+    externalRef:
+      provider: azure-keyvault
+      key: searchdemo-search-index
+      vaultUrl: https://wdf-secret-manager.vault.azure.net/
+  - name: azure-storage-account-name
+    injectAs: env
+    envVar: AZURE_STORAGE_ACCOUNT
+    externalRef:
+      provider: azure-keyvault
+      key: azure-storage-account-name
+      vaultUrl: https://wdf-secret-manager.vault.azure.net/
+  - name: azure-storage-container
+    injectAs: env
+    envVar: AZURE_STORAGE_CONTAINER
+    externalRef:
+      provider: azure-keyvault
+      key: azure-storage-container
+      vaultUrl: https://wdf-secret-manager.vault.azure.net/
+  - name: application-insights-connection-string
+    injectAs: env
+    envVar: APPLICATIONINSIGHTS_CONNECTION_STRING
+    externalRef:
+      provider: azure-keyvault
+      key: application-insights-connection-string
+      vaultUrl: https://wdf-secret-manager.vault.azure.net/
+source:
+  repo: https://github.com/7sg-ai/azure-search-openai-demo
+  branch: main
+  path: .
+dataSources:
+  inputs:
+  - name: openai-chat-endpoint
+    dsdfRef: dsdf/openai-chat-endpoint.dsdf.yaml
+  - name: openai-embedding-endpoint
+    dsdfRef: dsdf/openai-embedding-endpoint.dsdf.yaml
+  - name: ai-search-index
+    dsdfRef: dsdf/ai-search-index.dsdf.yaml
+  - name: blob-storage-documents
+    dsdfRef: dsdf/blob-storage-documents.dsdf.yaml
+  outputs: []
+modifications:
+  description: |
+    The azure-search-openai-demo uses a prebuild hook (azure.yaml) to build the
+    React frontend before the backend Docker image is created. For Sherpa deployment,
+    the Dockerfile must include a multi-stage build that handles the frontend build
+    internally. The CMD must use a production ASGI server (gunicorn with uvicorn
+    workers) instead of the development server.
+  required_changes:
+  - type: update_file
+    path: app/backend/Dockerfile
+    description: Add frontend build stage and set production CMD with gunicorn
+    changes:
+    - find: 'CMD ["python", "app.py"]'
+      replace: 'CMD ["python3", "-m", "gunicorn", "main:app", "-k", "uvicorn.workers.UvicornWorker",
+        "-b", "0.0.0.0:8000"]'
+scenarios:
+  native:
+    description: 'Azure Container Apps with gpt-4.1-mini + text-embedding-ada-002:
+      standard RAG chat deployment using Azure OpenAI for multi-turn conversation
+      and Q&A with Azure AI Search for hybrid retrieval and semantic ranking.'
+    topology:
+      components:
+      - &backend
+        name: searchdemo-backend
+        role: api
+        runtime:
+          platform: container-apps
+          regions:
+          - eastus2
+          dockerfile: app/backend/Dockerfile
+          image:
+            registry: uvsearchdemoacr.azurecr.io
+            repository: azure-search-openai-demo
+            tag: latest
+          env:
+          - name: OPENAI_HOST
+            value: azure
+          - name: RUNNING_IN_PRODUCTION
+            value: 'true'
+          - name: PYTHONUNBUFFERED
+            value: '1'
+          - name: LOG_LEVEL
+            value: INFO
+          - name: PORT
+            value: '8000'
+          - name: AZURE_OPENAI_CHATGPT_MODEL
+            value: gpt-4.1-mini
+          - name: AZURE_OPENAI_CHATGPT_DEPLOYMENT
+            value: gpt-4.1-mini
+          - name: AZURE_OPENAI_EMB_MODEL_NAME
+            value: text-embedding-ada-002
+          - name: AZURE_OPENAI_EMB_DEPLOYMENT
+            value: text-embedding-ada-002
+          - name: AZURE_OPENAI_EMB_DIMENSIONS
+            value: '1536'
+          - name: AZURE_OPENAI_API_VERSION
+            value: '2024-10-21'
+          - name: AZURE_SEARCH_SEMANTIC_RANKER
+            value: free
+          - name: AZURE_SEARCH_QUERY_LANGUAGE
+            value: en-us
+          - name: AZURE_SEARCH_QUERY_SPELLER
+            value: lexicon
+          - name: USE_VECTORS
+            value: 'true'
+          - name: USE_GPT4V
+            value: 'false'
+          envFromSecretRefs:
+          - searchdemo-openai-service
+          - searchdemo-openai-api-key
+          - searchdemo-search-service
+          - searchdemo-search-index
+          - azure-storage-account-name
+          - azure-storage-container
+          - application-insights-connection-string
+          resources:
+            cpu: '2'
+            memory: 4Gi
+          autoscaling:
+            minReplicas: 1
+            maxReplicas: 10
+            policy:
+              metric: cpu
+              target: 70
+        endpoints:
+        - name: http
+          port: 8000
+          exposure: public
+          protocol: http
+          path: /
+    deployments:
+    - name: azure-container-apps-gpt4-1-mini
+      target:
+        provider: azure
+        region: eastus2
+        tdfRef: azure-east-sd
+        cluster: searchdemo-aca-env
+        namespace: searchdemo
+      identityRef: azure-managed-identity://searchdemo
+      secretStores:
+        primary: wdf-secret-manager
+      components:
+      - searchdemo-backend
+      overrides:
+        components:
+          searchdemo-backend:
+            runtime:
+              image:
+                registry: uvsearchdemoacr.azurecr.io
+                repository: azure-search-openai-demo
+                tag: latest
+  alternates:
+  - name: azure-container-apps-gpt4-1-nano
+    description: 'Same Azure Container Apps setup but using gpt-4.1-nano instead of
+      gpt-4.1-mini as the chat model. Compares performance and answer quality with
+      a lighter model while keeping the same retrieval pipeline and embedding model.'
+    topology:
+      components:
+      - name: searchdemo-backend
+        role: api
+        runtime:
+          platform: container-apps
+          regions:
+          - eastus2
+          dockerfile: app/backend/Dockerfile
+          image:
+            registry: uvsearchdemoaltacr.azurecr.io
+            repository: azure-search-openai-demo
+            tag: latest
+          env:
+          - name: OPENAI_HOST
+            value: azure
+          - name: RUNNING_IN_PRODUCTION
+            value: 'true'
+          - name: PYTHONUNBUFFERED
+            value: '1'
+          - name: LOG_LEVEL
+            value: INFO
+          - name: PORT
+            value: '8000'
+          - name: AZURE_OPENAI_CHATGPT_MODEL
+            value: gpt-4.1-nano
+          - name: AZURE_OPENAI_CHATGPT_DEPLOYMENT
+            value: gpt-4.1-nano
+          - name: AZURE_OPENAI_EMB_MODEL_NAME
+            value: text-embedding-ada-002
+          - name: AZURE_OPENAI_EMB_DEPLOYMENT
+            value: text-embedding-ada-002
+          - name: AZURE_OPENAI_EMB_DIMENSIONS
+            value: '1536'
+          - name: AZURE_OPENAI_API_VERSION
+            value: '2024-10-21'
+          - name: AZURE_SEARCH_SEMANTIC_RANKER
+            value: free
+          - name: AZURE_SEARCH_QUERY_LANGUAGE
+            value: en-us
+          - name: AZURE_SEARCH_QUERY_SPELLER
+            value: lexicon
+          - name: USE_VECTORS
+            value: 'true'
+          - name: USE_GPT4V
+            value: 'false'
+          envFromSecretRefs:
+          - searchdemo-openai-service
+          - searchdemo-openai-api-key
+          - searchdemo-search-service
+          - searchdemo-search-index
+          - azure-storage-account-name
+          - azure-storage-container
+          - application-insights-connection-string
+          resources:
+            cpu: '2'
+            memory: 4Gi
+          autoscaling:
+            minReplicas: 1
+            maxReplicas: 10
+            policy:
+              metric: cpu
+              target: 70
+        endpoints:
+        - name: http
+          port: 8000
+          exposure: public
+          protocol: http
+          path: /
+    deployments:
+    - name: azure-container-apps-gpt4-1-nano
+      target:
+        provider: azure
+        region: eastus2
+        tdfRef: azure-east-sd-alt
+        cluster: searchdemo-alt-aca-env
+        namespace: searchdemo-alt
+      identityRef: azure-managed-identity://searchdemo
+      secretStores:
+        primary: wdf-secret-manager
+      components:
+      - searchdemo-backend
+      overrides:
+        components:
+          searchdemo-backend:
+            runtime:
+              image:
+                registry: uvsearchdemoaltacr.azurecr.io
+                repository: azure-search-openai-demo
+                tag: latest
+              env:
+              - name: AZURE_OPENAI_CHATGPT_MODEL
+                value: gpt-4.1-nano
+              - name: AZURE_OPENAI_CHATGPT_DEPLOYMENT
+                value: gpt-4.1-nano
+              - name: AZURE_OPENAI_API_VERSION
+                value: '2024-10-21'

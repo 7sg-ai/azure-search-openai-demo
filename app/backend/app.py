@@ -16,6 +16,7 @@ from azure.cognitiveservices.speech import (
     SpeechSynthesisResult,
     SpeechSynthesizer,
 )
+from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity.aio import (
     AzureDeveloperCliCredential,
@@ -30,7 +31,9 @@ from azure.storage.blob.aio import ContainerClient
 from azure.storage.blob.aio import StorageStreamDownloader as BlobDownloader
 from azure.storage.filedatalake.aio import FileSystemClient
 from azure.storage.filedatalake.aio import StorageStreamDownloader as DatalakeDownloader
-from openai import AsyncAzureOpenAI, AsyncOpenAI
+from langfuse import Langfuse
+from langfuse.decorators import observe
+from langfuse.openai import AsyncAzureOpenAI, AsyncOpenAI
 from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
 from opentelemetry.instrumentation.asgi import OpenTelemetryMiddleware
 from opentelemetry.instrumentation.httpx import (
@@ -178,6 +181,7 @@ async def content_file(path: str, auth_claims: dict[str, Any]):
 
 @bp.route("/ask", methods=["POST"])
 @authenticated
+@observe(name="POST /ask")
 async def ask(auth_claims: dict[str, Any]):
     if not request.is_json:
         return jsonify({"error": "request must be json"}), 415
@@ -217,6 +221,7 @@ async def format_as_ndjson(r: AsyncGenerator[dict, None]) -> AsyncGenerator[str,
 
 @bp.route("/chat", methods=["POST"])
 @authenticated
+@observe(name="POST /chat")
 async def chat(auth_claims: dict[str, Any]):
     if not request.is_json:
         return jsonify({"error": "request must be json"}), 415
@@ -251,6 +256,7 @@ async def chat(auth_claims: dict[str, Any]):
 
 @bp.route("/chat/stream", methods=["POST"])
 @authenticated
+@observe(name="POST /chat/stream")
 async def chat_stream(auth_claims: dict[str, Any]):
     if not request.is_json:
         return jsonify({"error": "request must be json"}), 415
@@ -422,6 +428,11 @@ async def list_uploaded(auth_claims: dict[str, Any]):
 
 @bp.before_app_serving
 async def setup_clients():
+    # Langfuse tracing configuration
+    os.environ.setdefault("LANGFUSE_SECRET_KEY", "sk-lf-f6e0520d-1257-4860-b90f-c2c58847a1c4")
+    os.environ.setdefault("LANGFUSE_PUBLIC_KEY", "pk-lf-5a5e08d7-2d14-448d-ac7f-51859d3c92eb")
+    os.environ.setdefault("LANGFUSE_HOST", "https://langfuse.7sg.ai")
+
     # Replace these with your own values, either in environment variables or directly here
     AZURE_STORAGE_ACCOUNT = os.environ["AZURE_STORAGE_ACCOUNT"]
     AZURE_STORAGE_CONTAINER = os.environ["AZURE_STORAGE_CONTAINER"]
@@ -491,31 +502,38 @@ async def setup_clients():
 
     # WEBSITE_HOSTNAME is always set by App Service, RUNNING_IN_PRODUCTION is set in main.bicep
     RUNNING_ON_AZURE = os.getenv("WEBSITE_HOSTNAME") is not None or os.getenv("RUNNING_IN_PRODUCTION") is not None
+    AZURE_SEARCH_KEY = os.getenv("AZURE_SEARCH_KEY")
+    AZURE_STORAGE_KEY = os.getenv("AZURE_STORAGE_KEY")
 
-    # Use the current user identity for keyless authentication to Azure services.
-    # This assumes you use 'azd auth login' locally, and managed identity when deployed on Azure.
-    # The managed identity is setup in the infra/ folder.
-    azure_credential: Union[AzureDeveloperCliCredential, ManagedIdentityCredential]
-    if RUNNING_ON_AZURE:
-        current_app.logger.info("Setting up Azure credential using ManagedIdentityCredential")
-        if AZURE_CLIENT_ID := os.getenv("AZURE_CLIENT_ID"):
-            # ManagedIdentityCredential should use AZURE_CLIENT_ID if set in env, but its not working for some reason,
-            # so we explicitly pass it in as the client ID here. This is necessary for user-assigned managed identities.
-            current_app.logger.info(
-                "Setting up Azure credential using ManagedIdentityCredential with client_id %s", AZURE_CLIENT_ID
-            )
-            azure_credential = ManagedIdentityCredential(client_id=AZURE_CLIENT_ID)
-        else:
-            current_app.logger.info("Setting up Azure credential using ManagedIdentityCredential")
-            azure_credential = ManagedIdentityCredential()
-    elif AZURE_TENANT_ID:
-        current_app.logger.info(
-            "Setting up Azure credential using AzureDeveloperCliCredential with tenant_id %s", AZURE_TENANT_ID
-        )
-        azure_credential = AzureDeveloperCliCredential(tenant_id=AZURE_TENANT_ID, process_timeout=60)
+    # When API keys are provided, use them directly (enables local Docker without Azure Identity)
+    if AZURE_SEARCH_KEY or AZURE_STORAGE_KEY:
+        current_app.logger.info("Using API key-based authentication for Azure services")
+        azure_credential = None  # type: ignore[assignment]
+        search_credential: Any = AzureKeyCredential(AZURE_SEARCH_KEY) if AZURE_SEARCH_KEY else None
+        storage_credential: Any = AZURE_STORAGE_KEY if AZURE_STORAGE_KEY else None
     else:
-        current_app.logger.info("Setting up Azure credential using AzureDeveloperCliCredential for home tenant")
-        azure_credential = AzureDeveloperCliCredential(process_timeout=60)
+        # Use the current user identity for keyless authentication to Azure services.
+        azure_credential: Union[AzureDeveloperCliCredential, ManagedIdentityCredential]
+        if RUNNING_ON_AZURE:
+            current_app.logger.info("Setting up Azure credential using ManagedIdentityCredential")
+            if AZURE_CLIENT_ID := os.getenv("AZURE_CLIENT_ID"):
+                current_app.logger.info(
+                    "Setting up Azure credential using ManagedIdentityCredential with client_id %s", AZURE_CLIENT_ID
+                )
+                azure_credential = ManagedIdentityCredential(client_id=AZURE_CLIENT_ID)
+            else:
+                current_app.logger.info("Setting up Azure credential using ManagedIdentityCredential")
+                azure_credential = ManagedIdentityCredential()
+        elif AZURE_TENANT_ID:
+            current_app.logger.info(
+                "Setting up Azure credential using AzureDeveloperCliCredential with tenant_id %s", AZURE_TENANT_ID
+            )
+            azure_credential = AzureDeveloperCliCredential(tenant_id=AZURE_TENANT_ID, process_timeout=60)
+        else:
+            current_app.logger.info("Setting up Azure credential using AzureDeveloperCliCredential for home tenant")
+            azure_credential = AzureDeveloperCliCredential(process_timeout=60)
+        search_credential = azure_credential
+        storage_credential = azure_credential
 
     # Set the Azure credential in the app config for use in other parts of the app
     current_app.config[CONFIG_CREDENTIAL] = azure_credential
@@ -524,14 +542,14 @@ async def setup_clients():
     search_client = SearchClient(
         endpoint=AZURE_SEARCH_ENDPOINT,
         index_name=AZURE_SEARCH_INDEX,
-        credential=azure_credential,
+        credential=search_credential,
     )
     agent_client = KnowledgeAgentRetrievalClient(
-        endpoint=AZURE_SEARCH_ENDPOINT, agent_name=AZURE_SEARCH_AGENT, credential=azure_credential
+        endpoint=AZURE_SEARCH_ENDPOINT, agent_name=AZURE_SEARCH_AGENT, credential=search_credential
     )
 
     blob_container_client = ContainerClient(
-        f"https://{AZURE_STORAGE_ACCOUNT}.blob.core.windows.net", AZURE_STORAGE_CONTAINER, credential=azure_credential
+        f"https://{AZURE_STORAGE_ACCOUNT}.blob.core.windows.net", AZURE_STORAGE_CONTAINER, credential=storage_credential
     )
 
     # Set up authentication helper
@@ -819,6 +837,7 @@ async def setup_clients():
 
 @bp.after_app_serving
 async def close_clients():
+    Langfuse().flush()
     await current_app.config[CONFIG_SEARCH_CLIENT].close()
     await current_app.config[CONFIG_BLOB_CONTAINER_CLIENT].close()
     if current_app.config.get(CONFIG_USER_BLOB_CONTAINER_CLIENT):
