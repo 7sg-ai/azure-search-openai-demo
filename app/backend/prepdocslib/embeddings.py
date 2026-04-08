@@ -261,3 +261,46 @@ class ImageEmbeddings:
 
     def before_retry_sleep(self, retry_state):
         logger.info("Rate limited on the Vision embeddings API, sleeping before retrying...")
+
+
+class NomicTritonEmbeddingService:
+    """Embedding service using a self-hosted Nomic model on Triton Inference Server."""
+
+    def __init__(
+        self,
+        endpoint: str,
+        dimensions: int = 768,
+        cf_client_id: str = "",
+        cf_client_secret: str = "",
+    ):
+        self.endpoint = endpoint
+        self.open_ai_dimensions = dimensions
+        self.open_ai_model_name = "nomic-embed"
+        self.cf_headers: dict[str, str] = {}
+        if cf_client_id:
+            self.cf_headers["CF-Access-Client-Id"] = cf_client_id
+        if cf_client_secret:
+            self.cf_headers["CF-Access-Client-Secret"] = cf_client_secret
+
+    async def create_embeddings(self, texts: list[str]) -> list[list[float]]:
+        prefixed = [f"search_document: {t}" for t in texts]
+        return await self._call_triton(prefixed, len(texts))
+
+    async def create_query_embedding(self, text: str) -> list[float]:
+        result = await self._call_triton([f"search_query: {text}"], 1)
+        return result[0]
+
+    async def _call_triton(self, texts: list[str], count: int) -> list[list[float]]:
+        headers = {"Content-Type": "application/json", **self.cf_headers}
+        body = {
+            "inputs": [{"name": "text", "datatype": "BYTES", "shape": [count, 1], "data": texts}],
+            "outputs": [{"name": "embeddings"}],
+        }
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.post(self.endpoint, json=body) as resp:
+                if resp.status != 200:
+                    raise Exception(f"Nomic embedding failed: {resp.status} {await resp.text()}")
+                result = await resp.json()
+                flat = result["outputs"][0]["data"]
+                dim = self.open_ai_dimensions
+                return [flat[i * dim : (i + 1) * dim] for i in range(count)]

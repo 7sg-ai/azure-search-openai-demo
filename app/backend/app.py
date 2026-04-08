@@ -642,9 +642,15 @@ async def setup_clients():
             )
     elif OPENAI_HOST == "local":
         current_app.logger.info("OPENAI_HOST is local, setting up local OpenAI client for OPENAI_BASE_URL with no key")
+        cf_headers = {}
+        if cf_id := os.environ.get("CF_ACCESS_CLIENT_ID"):
+            cf_headers["CF-Access-Client-Id"] = cf_id
+        if cf_secret := os.environ.get("CF_ACCESS_CLIENT_SECRET"):
+            cf_headers["CF-Access-Client-Secret"] = cf_secret
         openai_client = AsyncOpenAI(
             base_url=os.environ["OPENAI_BASE_URL"],
-            api_key="no-key-required",
+            api_key=os.environ.get("OPENAI_API_KEY", "no-key-required"),
+            default_headers=cf_headers if cf_headers else None,
         )
     else:
         current_app.logger.info(
@@ -660,6 +666,18 @@ async def setup_clients():
     current_app.config[CONFIG_AGENT_CLIENT] = agent_client
     current_app.config[CONFIG_BLOB_CONTAINER_CLIENT] = blob_container_client
     current_app.config[CONFIG_AUTH_CLIENT] = auth_helper
+
+    # Self-hosted Nomic embedding service (Triton)
+    nomic_embed_service = None
+    if nomic_url := os.environ.get("NOMIC_EMBED_URL"):
+        from prepdocslib.embeddings import NomicTritonEmbeddingService
+        nomic_embed_service = NomicTritonEmbeddingService(
+            endpoint=nomic_url,
+            dimensions=OPENAI_EMB_DIMENSIONS,
+            cf_client_id=os.environ.get("CF_ACCESS_CLIENT_ID", ""),
+            cf_client_secret=os.environ.get("CF_ACCESS_CLIENT_SECRET", ""),
+        )
+        current_app.logger.info("Nomic Triton embedding service configured at %s", nomic_url)
 
     current_app.config[CONFIG_GPT4V_DEPLOYED] = bool(USE_GPT4V)
     current_app.config[CONFIG_SEMANTIC_RANKER_DEPLOYED] = AZURE_SEARCH_SEMANTIC_RANKER != "disabled"
@@ -731,6 +749,11 @@ async def setup_clients():
         prompt_manager=prompt_manager,
         reasoning_effort=OPENAI_REASONING_EFFORT,
     )
+
+    # Inject Nomic embedding service into approaches for query-time vector computation
+    if nomic_embed_service:
+        current_app.config[CONFIG_ASK_APPROACH].embedding_service = nomic_embed_service
+        current_app.config[CONFIG_CHAT_APPROACH].embedding_service = nomic_embed_service
 
     if USE_GPT4V:
         current_app.logger.info("USE_GPT4V is true, setting up GPT4V approach")

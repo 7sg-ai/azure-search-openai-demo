@@ -353,6 +353,11 @@ class Approach(ABC):
             return sourcepage
 
     async def compute_text_embedding(self, q: str):
+        # Use Nomic Triton embedding service if available (self-hosted path)
+        if hasattr(self, "embedding_service") and self.embedding_service is not None:
+            query_vector = await self.embedding_service.create_query_embedding(q)
+            return VectorizedQuery(vector=query_vector, k_nearest_neighbors=50, fields=self.embedding_field)
+
         SUPPORTED_DIMENSIONS_MODEL = {
             "text-embedding-ada-002": False,
             "text-embedding-3-small": True,
@@ -363,17 +368,14 @@ class Approach(ABC):
             dimensions: int
 
         dimensions_args: ExtraArgs = (
-            {"dimensions": self.embedding_dimensions} if SUPPORTED_DIMENSIONS_MODEL[self.embedding_model] else {}
+            {"dimensions": self.embedding_dimensions} if SUPPORTED_DIMENSIONS_MODEL.get(self.embedding_model) else {}
         )
         embedding = await self.openai_client.embeddings.create(
-            # Azure OpenAI takes the deployment name as the model name
             model=self.embedding_deployment if self.embedding_deployment else self.embedding_model,
             input=q,
             **dimensions_args,
         )
         query_vector = embedding.data[0].embedding
-        # This performs an oversampling due to how the search index was setup,
-        # so we do not need to explicitly pass in an oversampling parameter here
         return VectorizedQuery(vector=query_vector, k_nearest_neighbors=50, fields=self.embedding_field)
 
     async def compute_image_embedding(self, q: str):
