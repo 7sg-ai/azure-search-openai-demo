@@ -32,7 +32,7 @@ from azure.storage.blob.aio import StorageStreamDownloader as BlobDownloader
 from azure.storage.filedatalake.aio import FileSystemClient
 from azure.storage.filedatalake.aio import StorageStreamDownloader as DatalakeDownloader
 from langfuse import Langfuse
-from langfuse.decorators import observe
+from langfuse.decorators import langfuse_context, observe
 from langfuse.openai import AsyncAzureOpenAI, AsyncOpenAI
 from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
 from opentelemetry.instrumentation.asgi import OpenTelemetryMiddleware
@@ -181,11 +181,14 @@ async def content_file(path: str, auth_claims: dict[str, Any]):
 
 @bp.route("/ask", methods=["POST"])
 @authenticated
-@observe(name="POST /ask")
+@observe(name="POST /ask", capture_input=False, capture_output=False)
 async def ask(auth_claims: dict[str, Any]):
     if not request.is_json:
         return jsonify({"error": "request must be json"}), 415
     request_json = await request.get_json()
+    langfuse_context.update_current_observation(
+        input={"messages": request_json.get("messages", [])},
+    )
     context = request_json.get("context", {})
     context["auth_claims"] = auth_claims
     try:
@@ -198,6 +201,7 @@ async def ask(auth_claims: dict[str, Any]):
         r = await approach.run(
             request_json["messages"], context=context, session_state=request_json.get("session_state")
         )
+        langfuse_context.update_current_observation(output=r)
         return jsonify(r)
     except Exception as error:
         return error_response(error, "/ask")
@@ -221,11 +225,14 @@ async def format_as_ndjson(r: AsyncGenerator[dict, None]) -> AsyncGenerator[str,
 
 @bp.route("/chat", methods=["POST"])
 @authenticated
-@observe(name="POST /chat")
+@observe(name="POST /chat", capture_input=False, capture_output=False)
 async def chat(auth_claims: dict[str, Any]):
     if not request.is_json:
         return jsonify({"error": "request must be json"}), 415
     request_json = await request.get_json()
+    langfuse_context.update_current_observation(
+        input={"messages": request_json.get("messages", [])},
+    )
     context = request_json.get("context", {})
     context["auth_claims"] = auth_claims
     try:
@@ -236,8 +243,6 @@ async def chat(auth_claims: dict[str, Any]):
         else:
             approach = cast(Approach, current_app.config[CONFIG_CHAT_APPROACH])
 
-        # If session state is provided, persists the session state,
-        # else creates a new session_id depending on the chat history options enabled.
         session_state = request_json.get("session_state")
         if session_state is None:
             session_state = create_session_id(
@@ -249,6 +254,7 @@ async def chat(auth_claims: dict[str, Any]):
             context=context,
             session_state=session_state,
         )
+        langfuse_context.update_current_observation(output=result)
         return jsonify(result)
     except Exception as error:
         return error_response(error, "/chat")
@@ -256,11 +262,14 @@ async def chat(auth_claims: dict[str, Any]):
 
 @bp.route("/chat/stream", methods=["POST"])
 @authenticated
-@observe(name="POST /chat/stream")
+@observe(name="POST /chat/stream", capture_input=False, capture_output=False)
 async def chat_stream(auth_claims: dict[str, Any]):
     if not request.is_json:
         return jsonify({"error": "request must be json"}), 415
     request_json = await request.get_json()
+    langfuse_context.update_current_observation(
+        input={"messages": request_json.get("messages", [])},
+    )
     context = request_json.get("context", {})
     context["auth_claims"] = auth_claims
     try:
@@ -271,8 +280,6 @@ async def chat_stream(auth_claims: dict[str, Any]):
         else:
             approach = cast(Approach, current_app.config[CONFIG_CHAT_APPROACH])
 
-        # If session state is provided, persists the session state,
-        # else creates a new session_id depending on the chat history options enabled.
         session_state = request_json.get("session_state")
         if session_state is None:
             session_state = create_session_id(
@@ -287,6 +294,9 @@ async def chat_stream(auth_claims: dict[str, Any]):
         response = await make_response(format_as_ndjson(result))
         response.timeout = None  # type: ignore
         response.mimetype = "application/json-lines"
+        langfuse_context.update_current_observation(
+            output={"status": "streamed", "mimetype": "application/json-lines"},
+        )
         return response
     except Exception as error:
         return error_response(error, "/chat")
