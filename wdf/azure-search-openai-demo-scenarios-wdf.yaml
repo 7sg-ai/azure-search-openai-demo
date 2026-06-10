@@ -10,14 +10,10 @@ metadata:
   tags:
     env: prod
 security:
-  network:
-    defaultExposure: private
-  identity:
-    workloadIdentity: true
+  policies:
+    secretsInEnvAllowed: true
 secrets:
   provider: azureKeyVault
-  azure-subscription-id: 82714879-4727-454d-8740-b2d24f5f426b
-  azure-tenant-id: d14f9525-afc9-4197-b391-5de78abfaab5
   secretRefs:
   - name: searchdemo-openai-service
     injectAs: env
@@ -83,21 +79,6 @@ dataSources:
   - name: blob-storage-documents
     dsdfRef: dsdf/blob-storage-documents.dsdf.yaml
   outputs: []
-modifications:
-  description: |
-    The azure-search-openai-demo uses a prebuild hook (azure.yaml) to build the
-    React frontend before the backend Docker image is created. For Sherpa deployment,
-    the Dockerfile must include a multi-stage build that handles the frontend build
-    internally. The CMD must use a production ASGI server (gunicorn with uvicorn
-    workers) instead of the development server.
-  required_changes:
-  - type: update_file
-    path: app/backend/Dockerfile
-    description: Add frontend build stage and set production CMD with gunicorn
-    changes:
-    - find: 'CMD ["python", "app.py"]'
-      replace: 'CMD ["python3", "-m", "gunicorn", "main:app", "-k", "uvicorn.workers.UvicornWorker",
-        "-b", "0.0.0.0:8000"]'
 scenarios:
   native:
     description: 'Azure Container Apps with gpt-4.1-mini + text-embedding-ada-002:
@@ -105,14 +86,12 @@ scenarios:
       and Q&A with Azure AI Search for hybrid retrieval and semantic ranking.'
     topology:
       components:
-      - &backend
-        name: searchdemo-backend
+      - name: searchdemo-backend
         role: api
         runtime:
           platform: container-apps
           regions:
           - eastus2
-          dockerfile: app/backend/Dockerfile
           image:
             registry: uvsearchdemoacr.azurecr.io
             repository: azure-search-openai-demo
@@ -207,7 +186,6 @@ scenarios:
           platform: container-apps
           regions:
           - eastus2
-          dockerfile: app/backend/Dockerfile
           image:
             registry: uvsearchdemoaltacr.azurecr.io
             repository: azure-search-openai-demo
