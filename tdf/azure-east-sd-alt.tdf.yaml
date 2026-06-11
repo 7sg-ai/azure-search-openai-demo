@@ -2,6 +2,7 @@ apiVersion: tdf.7sg.ai/v1
 kind: TargetDefinition
 metadata:
   name: azure-east-sd-alt
+  version: "1.0.0"
   displayName: Azure East - Search Demo Alternate (gpt-4.1-nano)
   description:
     Azure target in eastus2 for deploying the azure-search-openai-demo alternate
@@ -48,7 +49,7 @@ target:
         resourceGroup: searchdemo-alt-rg
 
     - name: ai-search
-      type: search
+      type: vector-store
       providerService: Azure AI Search
       capabilities:
         supportsSemanticSearch: true
