@@ -1,0 +1,91 @@
+apiVersion: tdf.7sg.ai/v1
+kind: TargetDefinition
+metadata:
+  name: azure-east-sd-alt-v2
+  version: "1.0.0"
+  displayName: Azure East - Search Demo Alternate (gpt-4.1-nano)
+  description:
+    Azure target in eastus2 for deploying the azure-search-openai-demo alternate
+    scenario on Azure Container Apps using gpt-4.1-nano. Shares the same AI
+    Search index, Blob Storage, and Key Vault as the native scenario but uses a
+    separate Container Apps environment and ACR for isolation.
+  tags:
+    provider: azure
+    geo: us
+    tier: alternate
+    platform: container-apps
+target:
+  provider: azure
+  regions:
+    - eastus2
+  geography:
+    continent: na
+    country: us
+    zoneGroup: us-central
+  networking:
+    defaultNetworkPolicy: private
+  services:
+    - name: container-apps
+      type: container-platform
+      providerService: Azure Container Apps
+      capabilities:
+        supportsManagedIdentity: true
+        supportsCustomDomains: true
+        supportsScaleToZero: true
+        supportsDapr: true
+      defaults:
+        resourceGroup: searchdemo-alt-rg
+        location: eastus2
+        environment: searchdemo-alt-aca-env
+        logAnalyticsWorkspace: searchdemo-logs
+
+    - name: acr
+      type: container-registry
+      providerService: Azure Container Registry
+      endpoints:
+        registry: uvsearchdemoaltacr.azurecr.io
+      defaults:
+        registryName: uvsearchdemoaltacr
+        resourceGroup: searchdemo-alt-rg
+
+    - name: ai-search
+      type: vector-store
+      providerService: Azure AI Search
+      capabilities:
+        supportsSemanticSearch: true
+        supportsVectorSearch: true
+        supportsPrivateEndpoints: true
+
+    - name: blob-storage
+      type: object-store
+      providerService: Azure Blob Storage
+      capabilities:
+        supportsPrivateEndpoints: true
+
+    - name: keyvault
+      type: secrets
+      providerService: Azure Key Vault
+      endpoints:
+        vault: https://wdf-secret-manager.vault.azure.net/
+      capabilities:
+        supportsPrivateEndpoints: true
+
+    - name: managed-identity
+      type: identity
+      providerService: Managed Identity
+
+    - name: observability
+      type: observability
+      providerService: Azure Monitor / Application Insights
+
+  infrastructure:
+    containerAppsEnvironment:
+      name: searchdemo-alt-aca-env
+      resourceGroup: searchdemo-alt-rg
+      location: eastus2
+    containerRegistry:
+      name: uvsearchdemoaltacr
+      service: acr
+    secretStores:
+      - name: wdf-secret-manager
+        service: keyvault

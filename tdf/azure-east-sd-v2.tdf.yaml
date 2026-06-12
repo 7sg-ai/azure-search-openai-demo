@@ -1,0 +1,89 @@
+apiVersion: tdf.7sg.ai/v1
+kind: TargetDefinition
+metadata:
+  name: azure-east-sd
+  displayName: Azure East - Search Demo Container Apps Target
+  description:
+    Azure target in eastus2 for deploying the azure-search-openai-demo native
+    scenario on Azure Container Apps with ACR, Key Vault, Azure OpenAI, Azure
+    AI Search, and Blob Storage.
+  tags:
+    provider: azure
+    geo: us
+    tier: native
+    platform: container-apps
+target:
+  provider: azure
+  regions:
+    - eastus2
+  geography:
+    continent: na
+    country: us
+    zoneGroup: us-central
+  networking:
+    defaultNetworkPolicy: private
+  services:
+    - name: container-apps
+      type: container-platform
+      providerService: Azure Container Apps
+      capabilities:
+        supportsManagedIdentity: true
+        supportsCustomDomains: true
+        supportsScaleToZero: true
+        supportsDapr: true
+      defaults:
+        resourceGroup: searchdemo-rg
+        location: eastus2
+        environment: searchdemo-aca-env
+        logAnalyticsWorkspace: searchdemo-logs
+
+    - name: acr
+      type: container-registry
+      providerService: Azure Container Registry
+      endpoints:
+        registry: uvsearchdemoacr.azurecr.io
+      defaults:
+        registryName: uvsearchdemoacr
+        resourceGroup: searchdemo-rg
+
+    - name: ai-search
+      type: search
+      providerService: Azure AI Search
+      capabilities:
+        supportsSemanticSearch: true
+        supportsVectorSearch: true
+        supportsPrivateEndpoints: true
+
+    - name: blob-storage
+      type: object-store
+      providerService: Azure Blob Storage
+      capabilities:
+        supportsPrivateEndpoints: true
+
+    - name: keyvault
+      type: secrets
+      providerService: Azure Key Vault
+      endpoints:
+        vault: https://wdf-secret-manager.vault.azure.net/
+      capabilities:
+        supportsPrivateEndpoints: true
+
+    - name: managed-identity
+      type: identity
+      providerService: Managed Identity
+
+    - name: observability
+      type: observability
+      providerService: Azure Monitor / Application Insights
+
+  infrastructure:
+    containerAppsEnvironment:
+      name: searchdemo-aca-env
+      resourceGroup: searchdemo-rg
+      location: eastus2
+    containerRegistry:
+      name: uvsearchdemoacr
+      service: acr
+    secretStores:
+      - name: wdf-secret-manager
+        service: keyvault
